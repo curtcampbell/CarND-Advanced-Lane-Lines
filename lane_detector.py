@@ -1,3 +1,6 @@
+# Import everything needed to edit/save/watch video clips
+from moviepy.editor import VideoFileClip
+
 import camera
 import process
 
@@ -6,131 +9,161 @@ import cv2
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 
+import imageio
 
-# Assume all images have the same shape.
-#
-def draw_lane(camera_calibarator, image, left_fit, right_fit):
-    """
-    
-    :param camera_calibarator: Instance of Calibrator class used for distorting
-           and undistoriting frame images.
-    :param image: unwarped frame image. 
-    :param left_fit: coefficients for curve fit of left lane in warped coordinates  
-    :param right_fit: coefficients for curv fit of right lane in warped coordinates
-    :return: Image with lane lines drawn on it.  
-    """
+imageio.plugins.ffmpeg.download()
 
-    # Create an image to draw the lines on
-    warp_zero = np.zeros_like(image).astype(np.uint8)
-    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
 
-    # Generate x and y values for plotting
-    ploty = np.linspace(0, image.shape[0] - 1, image.shape[0])
-    left_fitx = left_fit[0] * ploty ** 2 + left_fit[1] * ploty + left_fit[2]
-    right_fitx = right_fit[0] * ploty ** 2 + right_fit[1] * ploty + right_fit[2]
+class LaneDetector():
+    def __init__(self, camera_calibrator):
+        self.camera_calibrator = camera_calibrator
 
-    # Recast the x and y points into usable format for cv2.fillPoly()
-    pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
-    pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
-    pts = np.hstack((pts_left, pts_right))
+        # was the line detected in the last iteration?
+        self.detected = False
+        # x values of the last n fits of the line
+        self.recent_xfitted = []
+        # average x values of the fitted line over the last n iterations
+        self.bestx = None
+        # polynomial coefficients averaged over the last n iterations
+        self.best_fit = None
+        # polynomial coefficients for the most recent fit
+        self.current_fit = [np.array([False])]
+        # radius of curvature of the line in some units
+        self.radius_of_curvature = None
+        # distance in meters of vehicle center from the line
+        self.line_base_pos = None
+        # difference in fit coefficients between last and new fits
+        self.diffs = np.array([0,0,0], dtype='float')
+        # x values for detected line pixels
+        self.allx = None
+        # y values for detected line pixels
+        self.ally = None
 
-    # Draw the lane onto the warped blank image
-    cv2.fillPoly(warp_zero, np.int_([pts]), (0, 255, 0))
+        self.window_width = 50
+        self.window_height = 80
+        self.margin = 100
 
-    # Warp the blank back to original image space using inverse perspective matrix (Minv)
-    newwarp = camera_calibarator.unwarp(warp_zero)
+        self.world_conversion_factor = (3.7/700, 30/720)
 
-    # Combine the result with the original image
-    result = cv2.addWeighted(image, 1, newwarp, 0.3, 0)
+    def process_frame(self, image):
 
-    return result
+        top_down_image_mask = process.get_top_down_mask(calib, image)
+
+        if self.detected == False:
+            left_fit, right_fit, world_left_fit, world_right_fit = \
+                process.fit_lanes(top_down_image_mask, world_conversion_factor=self.world_conversion_factor)
+
+            # window_centroids = process.find_window_centroids(top_down_image_mask, 20, 20, 10)
+            self.current_fit = np.array([left_fit, right_fit])
+        else:
+            left_fit, right_fit,  world_left_fit, world_right_fit  = \
+                process.fit_lanes_next_frame(top_down_image_mask,
+                                             self.current_fit[0],
+                                             self.current_fit[1],
+                                             world_conversion_factor=self.world_conversion_factor)
+
+            self.current_fit = np.array([left_fit, right_fit])
+
+        self.detected = self.do_sanity_check(left_fit, right_fit);
+
+        if self.detected:
+            l_radius, r_radius = self.calc_radius(world_left_fit, world_right_fit)
+            self.radius_of_curvature = (l_radius + r_radius)/2
+
+        buffer = LaneDetector.draw_lane(calib, image, left_fit, right_fit)
+        self.draw_info(buffer)
+
+
+        return buffer
+
+    def detect_lanes(self, input_video_clip_file, output_video_clip):
+        clip = VideoFileClip(input_video_clip_file)
+        output_clip = clip.fl_image(self.process_frame)
+
+        output_clip.write_videofile(output_video_clip, audio=False)
+
+    def do_sanity_check(self, left_fit, right_fit):
+        val = np.abs(left_fit - right_fit)
+        val = val[0:2]
+        val = val[np.where(val > 1)]
+        return val.size == 0
+
+    @staticmethod
+    def draw_lane(camera_calibarator, image, left_fit, right_fit):
+        """
+        
+        :param camera_calibarator: Instance of Calibrator class used for distorting
+               and undistoriting frame images.
+        :param image: unwarped frame image. 
+        :param left_fit: coefficients for curve fit of left lane in warped coordinates  
+        :param right_fit: coefficients for curv fit of right lane in warped coordinates
+        :return: Image with lane lines drawn on it.  
+        """
+
+        # Create an image to draw the lines on
+        warp_zero = np.zeros_like(image).astype(np.uint8)
+
+        # Generate x and y values for plotting
+        ploty = np.linspace(0, image.shape[0] - 1, image.shape[0])
+        left_fitx = left_fit[0] * ploty ** 2 + left_fit[1] * ploty + left_fit[2]
+        right_fitx = right_fit[0] * ploty ** 2 + right_fit[1] * ploty + right_fit[2]
+
+        # Recast the x and y points into usable format for cv2.fillPoly()
+        pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+        pts = np.hstack((pts_left, pts_right))
+
+        # Draw the lane onto the warped blank image
+        cv2.fillPoly(warp_zero, np.int_([pts]), (0, 255, 0))
+
+        # Warp the blank back to original image space using inverse perspective matrix (Minv)
+        newwarp = camera_calibarator.unwarp(warp_zero)
+
+        # Combine the result with the original image
+        result = cv2.addWeighted(image, 1, newwarp, 0.3, 0)
+
+        return result
+
+    def draw_info(self, image):
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        if self.radius_of_curvature <= 1500:
+            radius_string = 'Radius: {}'.format(self.radius_of_curvature)
+        else:
+            radius_string = 'No Curve'
+        cv2.putText(image, radius_string, (10, 50), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+
+        center_offset_string = 'Center Offset: {}'.format('No Data')
+        cv2.putText(image, center_offset_string, (10, 100), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+
+        return
+
+    def calc_radius(self, left_fit, right_fit):
+        # y_eval = np.max(ploty)
+        y_eval = 700 * self.world_conversion_factor[1]
+        left_curverad = ((1 + (2 * left_fit[0] * y_eval + left_fit[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit[0])
+        right_curverad = ((1 + (2 * right_fit[0] * y_eval + right_fit[1]) ** 2) ** 1.5) / np.absolute(2 * right_fit[0])
+        return left_curverad, right_curverad
+
+
+image = mpimg.imread(".\\test_images\\straight_lines1.jpg")
+#image = mpimg.imread(".\\test_images\\test3.jpg")
 
 
 calib = camera.Calibrator()
 calib.load_calibaration("cam_calib.p")
 
-image = mpimg.imread(".\\test_images\\straight_lines2.jpg")
-
-dst = calib.undistort(image)
-gray_dst = cv2.cvtColor(dst, cv2.COLOR_RGB2GRAY)
-hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)[:,:,2]
-
-# roi = np.array([[(0,433),
-#                  (1279,433),
-#                  (1279, 638),
-#                  (0,638)]], dtype=np.int32)
-
-# Choose a Sobel kernel size
-ksize = 9 # Choose a larger odd number to smooth gradient measurements
-
-# Apply each of the thresholding functions
-# gradx = process.abs_sobel_thresh(hsv, orient='x', sobel_kernel=ksize, thresh=(30, 100))
-# grady = process.abs_sobel_thresh(hsv, orient='y', sobel_kernel=ksize, thresh=(30, 100))
-# mag_binary = process.mag_thresh(hsv, sobel_kernel=ksize, mag_thresh=(30, 100))
-# dir_binary = process.dir_threshold(hsv, sobel_kernel=ksize, thresh=(0.7, 1.3))
-
-
-gradx = process.abs_sobel_thresh(gray_dst, orient='x', sobel_kernel=ksize, thresh=(30, 100))
-grady = process.abs_sobel_thresh(gray_dst, orient='y', sobel_kernel=ksize, thresh=(30, 100))
-mag_binary = process.mag_thresh(gray_dst, sobel_kernel=ksize, mag_thresh=(30, 100))
-dir_binary = process.dir_threshold(gray_dst, sobel_kernel=ksize, thresh=(0.7, 1.3))
-h_bin = process.hls_select(dst, thresh=(215, 255))
-
-combined = np.zeros_like(dir_binary)
-combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
-
-
-warped_image = calib.warp(combined)
-
-left_fit, right_fit = process.fit_lanes(warped_image)
-
-output = draw_lane(calib, image, left_fit, right_fit)
-
-plt.imshow(output)
-plt.show()
-
-# window settings
-window_width = 50
-window_height = 80  # Break image into 9 vertical layers since image height is 720
-margin = 100  # How much to slide left and right for searching
-
-
-window_centroids = process.find_window_centroids(warped_image, window_width, window_height, margin)
-
-# # Fit a second order polynomial to each
-# # left_fit = np.polyfit(lefty, leftx, 2)
-# # right_fit = np.polyfit(righty, rightx, 2)
-#
-# # If we found any window centers
-# if len(window_centroids) > 0:
-#
-#     # Points used to draw all the left and right windows
-#     l_points = np.zeros_like(warped_image)
-#     r_points = np.zeros_like(warped_image)
-#
-#     # Go through each level and draw the windows
-#     for level in range(0, len(window_centroids)):
-#         # Window_mask is a function to draw window areas
-#         l_mask = process.window_mask(window_width, window_height, warped_image, window_centroids[level][0], level)
-#         r_mask = process.window_mask(window_width, window_height, warped_image, window_centroids[level][1], level)
-#         # Add graphic points from window mask here to total pixels found
-#         l_points[(l_points == 255) | ((l_mask == 1))] = 255
-#         r_points[(r_points == 255) | ((r_mask == 1))] = 255
-#
-#     # Draw the results
-#     template = np.array(r_points + l_points, np.uint8)  # add both left and right window pixels together
-#     zero_channel = np.zeros_like(template)  # create a zero color channel
-#     template = np.array(cv2.merge((zero_channel, template, zero_channel)), np.uint8)  # make window pixels green
-#     warpage = np.array(cv2.merge((warped_image, warped_image, warped_image)),
-#                        np.uint8)  # making the original road pixels 3 color channels
-#     output = cv2.addWeighted(warpage, 1, template, 0.5, 0.0)  # overlay the orignal road image with window results
-#
-# # If no window centers found, just display orginal road image
-# else:
-#     output = np.array(cv2.merge((warped_image, warped_image, warped_image)), np.uint8)
-#
-# # Display the final results
+lane_detector = LaneDetector(calib)
+# output = lane_detector.process_frame(image)
 # plt.imshow(output)
-# plt.title('window fitting results')
 # plt.show()
+
+lane_detector.detect_lanes('.\\project_video.mp4', '.\\project_video_output.mp4')
+# lane_detector.detect_lanes('.\\challenge_video.mp4', '.\\challenge_video_output.mp4')
+
+# output = LaneDetector.draw_lane(calib, image, left_fit, right_fit)
+
+# plt.imshow(output)
+# plt.show()
+
 
