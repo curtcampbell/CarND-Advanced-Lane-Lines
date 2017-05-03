@@ -1,8 +1,5 @@
 import numpy as np
 import cv2
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-import glob, pickle
 
 
 def abs_sobel_thresh(gray_img, orient='x', sobel_kernel=3, thresh=(0, 255)):
@@ -65,7 +62,7 @@ def hls_select(image, thresh=(0, 255)):
 
 def get_top_down_mask(camera_calibrator, image):
     dst = camera_calibrator.undistort(image)
-    gray_dst = cv2.cvtColor(dst, cv2.COLOR_RGB2GRAY)
+    # gray_dst = cv2.cvtColor(dst, cv2.COLOR_RGB2GRAY)
 
     # # Choose a Sobel kernel size
     # ksize = 9  # Choose a larger odd number to smooth gradient measurements
@@ -77,9 +74,9 @@ def get_top_down_mask(camera_calibrator, image):
     # dir_binary = dir_threshold(gray_dst, sobel_kernel=ksize, thresh=(0.7, 1.3))
     #
 
-
-    # After all of the experimentation, it turns out for this particular
+    # After all of the experimentation, it turns out for this particular project, hls performed the best.
     h_bin = hls_select(dst, thresh=(215, 255))
+
     #
     # combined = np.zeros_like(dir_binary)
     # combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
@@ -160,14 +157,7 @@ def fit_lanes(binary_warped, num_windows=9, margin=100, min_pixel_threshold=50, 
     righty = nonzeroy[right_lane_inds]
 
     # Fit a second order polynomial to each
-    left_fit = np.polyfit(lefty, leftx, 2)
-    right_fit = np.polyfit(righty, rightx, 2)
-
-    world_left_fit = np.polyfit(lefty * world_conversion_factor[1], leftx * world_conversion_factor[0], 2)
-    world_right_fit = np.polyfit(righty  * world_conversion_factor[1], rightx * world_conversion_factor[0], 2)
-
-
-    return left_fit, right_fit, world_left_fit, world_right_fit
+    return poly_fit_points(leftx, lefty, rightx, righty, world_conversion_factor)
 
 
 def fit_lanes_next_frame(binary_warped, left_fit, right_fit, margin=100, world_conversion_factor= (30/720, 3.7/700)):
@@ -205,13 +195,29 @@ def fit_lanes_next_frame(binary_warped, left_fit, right_fit, margin=100, world_c
     lefty = nonzeroy[left_lane_inds]
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds]
+
     # Fit a second order polynomial to each
-    left_fit = np.polyfit(lefty, leftx, 2)
-    right_fit = np.polyfit(righty, rightx, 2)
+    return poly_fit_points(leftx, lefty, rightx, righty, world_conversion_factor)
 
-    world_left_fit = np.polyfit(lefty * world_conversion_factor[1], leftx*world_conversion_factor[0], 2)
-    world_right_fit = np.polyfit(righty  * world_conversion_factor[1], rightx * world_conversion_factor[0], 2)
 
+def poly_fit_points(leftx, lefty, rightx, righty, world_conversion_factor= (30 / 720, 3.7 / 700)):
+    left_fit = None
+    if len(leftx) > 0 and len(lefty) > 0:
+        left_fit = np.polyfit(lefty, leftx, 2)
+
+    right_fit = None
+    if len(rightx) > 0 and len(righty) > 0:
+        right_fit = np.polyfit(righty, rightx, 2)
+
+    world_left_fit = None
+    if len(leftx) > 0 and len(lefty) > 0:
+        world_left_fit = np.polyfit(lefty * world_conversion_factor[1], leftx * world_conversion_factor[0], 2)
+
+    world_right_fit = None
+    if len(rightx) > 0 and len(righty) > 0:
+        world_right_fit = np.polyfit(righty * world_conversion_factor[1], rightx * world_conversion_factor[0], 2)
+
+    # use our fit to determine the lane center
     return left_fit, right_fit, world_left_fit, world_right_fit
 
 
@@ -260,4 +266,29 @@ def find_window_centroids(image, window_width, window_height, margin):
 
     return window_centroids
 
+
+def solve_poly(coefficients, input):
+    y=0
+    i = len(coefficients)
+    for idx in range(i, 0, -1):
+       y +=  coefficients[i-idx] * input**(idx-1)
+
+    return y
+
+
+def rolling_average(new_sample, iteration, prev_avg = None):
+    """
+    Calculates the rolling average using Welford’s method
+    :param new_sample: The new sample
+    :param iteration:  current iteration or the current number of samples
+    :param prev_avg: Previous average
+    :return: 
+    """
+    # Add 1 because this function is 1 based not 0.
+    iteration += 1
+    if iteration == 1:
+        avg = new_sample
+    else:
+        avg = prev_avg + (new_sample - prev_avg)/iteration
+    return avg
 

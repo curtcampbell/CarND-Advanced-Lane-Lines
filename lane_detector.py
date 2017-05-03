@@ -45,34 +45,48 @@ class LaneDetector():
 
         self.world_conversion_factor = (3.7/700, 30/720)
 
+        self.max_smoothing_samples = 7
+        self.num_smoothing_samples = 0
+
     def process_frame(self, image):
 
         top_down_image_mask = process.get_top_down_mask(calib, image)
 
-        if self.detected == False:
+        if not self.detected:
             left_fit, right_fit, world_left_fit, world_right_fit = \
                 process.fit_lanes(top_down_image_mask, world_conversion_factor=self.world_conversion_factor)
-
-            # window_centroids = process.find_window_centroids(top_down_image_mask, 20, 20, 10)
-            self.current_fit = np.array([left_fit, right_fit])
         else:
-            left_fit, right_fit,  world_left_fit, world_right_fit  = \
+            left_fit, right_fit,  world_left_fit, world_right_fit = \
                 process.fit_lanes_next_frame(top_down_image_mask,
                                              self.current_fit[0],
                                              self.current_fit[1],
                                              world_conversion_factor=self.world_conversion_factor)
 
-            self.current_fit = np.array([left_fit, right_fit])
-
-        self.detected = self.do_sanity_check(left_fit, right_fit);
+        self.detected = self._do_sanity_check(left_fit, right_fit);
 
         if self.detected:
-            l_radius, r_radius = self.calc_radius(world_left_fit, world_right_fit)
-            self.radius_of_curvature = (l_radius + r_radius)/2
+            self.current_fit = np.array([left_fit, right_fit])
 
-        buffer = LaneDetector.draw_lane(calib, image, left_fit, right_fit)
-        self.draw_info(buffer)
+            self.best_fit = process.rolling_average(self.current_fit, self.num_smoothing_samples, self.best_fit)
+            if self.num_smoothing_samples < self.max_smoothing_samples:
+                self.num_smoothing_samples += 1
 
+            # Calculate the vehicle offset in pixels then convert to world coordinates.
+            self.line_base_pos = \
+                self.calc_lane_offset(left_fit,right_fit, image_shape= image.shape) * self.world_conversion_factor[0]
+
+        elif self.best_fit is not None:
+            self.current_fit =  self.best_fit
+
+        l_radius, r_radius = self.calc_radius(world_left_fit, world_right_fit)
+        self.radius_of_curvature = (l_radius + r_radius) / 2
+
+        # buffer = LaneDetector.draw_lane(calib, image, left_fit, right_fit)
+        if self.best_fit is not None:
+            buffer = LaneDetector.draw_lane(calib, image, self.best_fit[0], self.best_fit[1], top_down_image_mask)
+            self.draw_info(buffer)
+        else:
+            return image
 
         return buffer
 
@@ -82,14 +96,19 @@ class LaneDetector():
 
         output_clip.write_videofile(output_video_clip, audio=False)
 
-    def do_sanity_check(self, left_fit, right_fit):
+    def _do_sanity_check(self, left_fit, right_fit):
+        if left_fit is None or right_fit is None:
+            return False
+
+        # a basic sanity check is to make sure our left and right polynomials don't
+        # differ too much.
         val = np.abs(left_fit - right_fit)
         val = val[0:2]
         val = val[np.where(val > 1)]
         return val.size == 0
 
     @staticmethod
-    def draw_lane(camera_calibarator, image, left_fit, right_fit):
+    def draw_lane(camera_calibarator, image, left_fit, right_fit, detected_lanes = None):
         """
         
         :param camera_calibarator: Instance of Calibrator class used for distorting
@@ -97,6 +116,7 @@ class LaneDetector():
         :param image: unwarped frame image. 
         :param left_fit: coefficients for curve fit of left lane in warped coordinates  
         :param right_fit: coefficients for curv fit of right lane in warped coordinates
+        :param detected_lanes:
         :return: Image with lane lines drawn on it.  
         """
 
@@ -113,6 +133,11 @@ class LaneDetector():
         pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
         pts = np.hstack((pts_left, pts_right))
 
+        # Merge lane mask
+        if detected_lanes is not None:
+            detected_lanes = camera_calibarator.unwarp(detected_lanes)
+            image[detected_lanes == 1] = (255,0,0)
+
         # Draw the lane onto the warped blank image
         cv2.fillPoly(warp_zero, np.int_([pts]), (0, 255, 0))
 
@@ -128,12 +153,12 @@ class LaneDetector():
         font = cv2.FONT_HERSHEY_SIMPLEX
 
         if self.radius_of_curvature <= 1500:
-            radius_string = 'Radius: {}'.format(self.radius_of_curvature)
+            radius_string = 'Radius: {:.0f}'.format(self.radius_of_curvature)
         else:
             radius_string = 'No Curve'
         cv2.putText(image, radius_string, (10, 50), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
 
-        center_offset_string = 'Center Offset: {}'.format('No Data')
+        center_offset_string = 'Center Offset: {:.2f}'.format(self.line_base_pos)
         cv2.putText(image, center_offset_string, (10, 100), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
 
         return
@@ -145,9 +170,20 @@ class LaneDetector():
         right_curverad = ((1 + (2 * right_fit[0] * y_eval + right_fit[1]) ** 2) ** 1.5) / np.absolute(2 * right_fit[0])
         return left_curverad, right_curverad
 
+    def calc_lane_offset(self, left_fit, right_fit, image_shape):
+        left_side = process.solve_poly(left_fit, image_shape[0])
+        right_side = process.solve_poly(right_fit, image_shape[0])
 
-image = mpimg.imread(".\\test_images\\straight_lines1.jpg")
-#image = mpimg.imread(".\\test_images\\test3.jpg")
+        lane_center = left_side + (right_side - left_side) / 2
+        frame_center = image_shape[0]/2
+        center_offset = frame_center - lane_center
+
+        return center_offset
+
+
+
+# image = mpimg.imread(".\\test_images\\straight_lines1.jpg")
+# image = mpimg.imread(".\\test_images\\test3.jpg")
 
 
 calib = camera.Calibrator()
@@ -159,7 +195,7 @@ lane_detector = LaneDetector(calib)
 # plt.show()
 
 lane_detector.detect_lanes('.\\project_video.mp4', '.\\project_video_output.mp4')
-# lane_detector.detect_lanes('.\\challenge_video.mp4', '.\\challenge_video_output.mp4')
+#lane_detector.detect_lanes('.\\challenge_video.mp4', '.\\challenge_video_output.mp4')
 
 # output = LaneDetector.draw_lane(calib, image, left_fit, right_fit)
 
