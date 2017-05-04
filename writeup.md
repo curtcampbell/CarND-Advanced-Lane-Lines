@@ -1,9 +1,3 @@
-## Writeup Template
-
-### You can use this file as a template for your writeup if you want to submit it as a markdown file, but feel free to use some other method and submit a pdf if you prefer.
-
----
-
 **Advanced Lane Finding Project**
 
 The goals / steps of this project are the following:
@@ -19,12 +13,12 @@ The goals / steps of this project are the following:
 
 [//]: # (Image References)
 
-[image1]: ./examples/undistort_output.png "Undistorted"
-[image2]: ./test_images/test1.jpg "Road Transformed"
-[image3]: ./examples/binary_combo_example.jpg "Binary Example"
-[image4]: ./examples/warped_straight_lines.jpg "Warp Example"
-[image5]: ./examples/color_fit_lines.jpg "Fit Visual"
-[image6]: ./examples/example_output.jpg "Output"
+[image1]: ./output_images/Calib-2-Undistorted_Image.png "Undistorted"
+[image2]: ./output_images/Pipeline-2-Remove_Camera_distortion.png "Road Transformed"
+[image3]: ./output_images/Pipeline-3-HLV_colorspace_thresholding.png "Binary Example"
+[image4]: ./output_images/Pipeline-4-Perspective_transform.png "Warp Example"
+[image5]: ./output_images/Pipeline-5-Curve_fit_overlay.png "Fit Visual"
+[image6]: ./output_images/Pipeline-5-Curve_fit_overlay.png "Output"
 [video1]: ./project_video.mp4 "Video"
 
 ## [Rubric](https://review.udacity.com/#!/rubrics/571/view) Points
@@ -43,11 +37,37 @@ You're reading it!
 
 #### 1. Briefly state how you computed the camera matrix and distortion coefficients. Provide an example of a distortion corrected calibration image.
 
-The code for this step is contained in the first code cell of the IPython notebook located in "./examples/example.ipynb" (or in lines # through # of the file called `some_file.py`).  
+The camera calibartion code is found in `camera.py` A class called `CameraCalibrator` contains the implementation for
+compensating for camera lense distortion.  This class wraps calls to library calls to OpenCV.
+  
+Because I knew this project would involve quite a bit of experimentation, I 
+I decided to precompute the camera matrix  and distortion coefficients and then use pickle to save the results.  The 
+pickled values are then loaded at every run iteration.  `camera.py` defines a `CameraCalibaration` class which has
+the relevant code.    
 
-I start by preparing "object points", which will be the (x, y, z) coordinates of the chessboard corners in the world. Here I am assuming the chessboard is fixed on the (x, y) plane at z=0, such that the object points are the same for each calibration image.  Thus, `objp` is just a replicated array of coordinates, and `objpoints` will be appended with a copy of it every time I successfully detect all chessboard corners in a test image.  `imgpoints` will be appended with the (x, y) pixel position of each of the corners in the image plane with each successful chessboard detection.  
+The following code snippet is found at line 35 in `campera.py`
+```python
+    def calibrate(self, image_name_pattern, nx, ny):
+        objp = np.zeros((nx * ny, 3), np.float32)
+        objp[:, :2] = np.mgrid[0:nx, 0:ny].T.reshape(-1, 2)
 
-I then used the output `objpoints` and `imgpoints` to compute the camera calibration and distortion coefficients using the `cv2.calibrateCamera()` function.  I applied this distortion correction to the test image using the `cv2.undistort()` function and obtained this result: 
+        images = glob.glob(image_name_pattern)
+
+        for image in images:
+
+            img = mpimg.imread(image)
+
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            ret, corners = cv2.findChessboardCorners(gray, (nx, ny), None)
+
+            if ret == True:
+                self.img_points.append(corners)
+                self.obj_points.append(objp)
+
+        ret, self.mtx, self.dist, self.rvecs, self.tvecs =\
+            cv2.calibrateCamera(self.obj_points, self.img_points, gray.shape[::-1], None, None)
+
+```
 
 ![alt text][image1]
 
@@ -116,7 +136,7 @@ I implemented this step in lines # through # in my code in `yet_another_file.py`
 
 #### 1. Provide a link to your final video output.  Your pipeline should perform reasonably well on the entire project video (wobbly lines are ok but no catastrophic failures that would cause the car to drive off the road!).
 
-Here's a [link to my video result](./project_video.mp4)
+Here's a [link to my video result](./project_video_output.mp4)
 
 ---
 

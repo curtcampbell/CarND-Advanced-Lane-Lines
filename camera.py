@@ -7,14 +7,6 @@ import glob, pickle
 from skimage.transform._geometric import warp
 
 
-# def find_corners(img, nx, ny):
-#     # Convert to grayscale
-#     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-#
-#     # Find the chessboard corners
-#     return cv2.findChessboardCorners(gray, (nx, ny), None)
-
-
 class CameraCalibrator:
 
     mtx = None
