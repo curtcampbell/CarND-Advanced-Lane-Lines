@@ -40,7 +40,7 @@ final_output = lane_detector.process_frame(test_image)
 
 plot(image, "Pipeline-input")
 plot(correct_distortion_image, "Pipeline-remove-camera-distortion")
-plot(hls_threshold, "HLV color space threshold", cmap='gray')
+plot(hls_threshold, "HSV color space threshold", cmap='gray')
 plot(top_down, "Top down perspective transform", cmap='gray')
 plot(final_output, "Comple curve fit")
 
