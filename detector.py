@@ -50,7 +50,7 @@ class LaneDetector():
 
     def process_frame(self, image):
 
-        top_down_image_mask = process.get_top_down_mask(calib, image)
+        top_down_image_mask = process.get_top_down_mask(self.camera_calibrator, image)
 
         if not self.detected:
             left_fit, right_fit, world_left_fit, world_right_fit = \
@@ -83,7 +83,7 @@ class LaneDetector():
 
         # buffer = LaneDetector.draw_lane(calib, image, left_fit, right_fit)
         if self.best_fit is not None:
-            buffer = LaneDetector.draw_lane(calib, image, self.best_fit[0], self.best_fit[1], top_down_image_mask)
+            buffer = LaneDetector.draw_lane(self.camera_calibrator, image, self.best_fit[0], self.best_fit[1], top_down_image_mask)
             self.draw_info(buffer)
         else:
             return image
@@ -153,12 +153,12 @@ class LaneDetector():
         font = cv2.FONT_HERSHEY_SIMPLEX
 
         if self.radius_of_curvature <= 1500:
-            radius_string = 'Radius: {:.0f}'.format(self.radius_of_curvature)
+            radius_string = 'Turn Radius: {:.0f}(m)'.format(self.radius_of_curvature)
         else:
             radius_string = 'No Curve'
         cv2.putText(image, radius_string, (10, 50), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
 
-        center_offset_string = 'Center Offset: {:.2f}'.format(self.line_base_pos)
+        center_offset_string = 'Center Offset: {:.2f}(m)'.format(self.line_base_pos)
         cv2.putText(image, center_offset_string, (10, 100), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
 
         return
@@ -171,35 +171,16 @@ class LaneDetector():
         return left_curverad, right_curverad
 
     def calc_lane_offset(self, left_fit, right_fit, image_shape):
-        left_side = process.solve_poly(left_fit, image_shape[0])
-        right_side = process.solve_poly(right_fit, image_shape[0])
+        y = image_shape[0]
 
-        lane_center = left_side + (right_side - left_side) / 2
-        frame_center = image_shape[0]/2
+        left_side = process.solve_poly(left_fit, y)
+        right_side = process.solve_poly(right_fit, y)
+
+        lane_center = (right_side - left_side) / 2
+        frame_center = y/2
         center_offset = frame_center - lane_center
 
         return center_offset
 
-
-
-# image = mpimg.imread(".\\test_images\\straight_lines1.jpg")
-# image = mpimg.imread(".\\test_images\\test3.jpg")
-
-
-calib = camera.Calibrator()
-calib.load_calibaration("cam_calib.p")
-
-lane_detector = LaneDetector(calib)
-# output = lane_detector.process_frame(image)
-# plt.imshow(output)
-# plt.show()
-
-lane_detector.detect_lanes('.\\project_video.mp4', '.\\project_video_output.mp4')
-#lane_detector.detect_lanes('.\\challenge_video.mp4', '.\\challenge_video_output.mp4')
-
-# output = LaneDetector.draw_lane(calib, image, left_fit, right_fit)
-
-# plt.imshow(output)
-# plt.show()
 
 

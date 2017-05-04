@@ -292,3 +292,21 @@ def rolling_average(new_sample, iteration, prev_avg = None):
         avg = prev_avg + (new_sample - prev_avg)/iteration
     return avg
 
+
+def exp_approx_rolling_average (new_sample, iteration, prev_avg = None):
+    """
+    Calculates the exponentially weighted moving average
+    :param new_sample: The new sample
+    :param iteration:  current iteration or the current number of samples
+    :param prev_avg: Previous average
+    :return: 
+    """
+
+    iteration += 1
+    if iteration == 1:
+        avg = new_sample
+    else:
+        avg = prev_avg - prev_avg / iteration
+        avg += new_sample / iteration;
+
+    return avg;

@@ -15,7 +15,7 @@ from skimage.transform._geometric import warp
 #     return cv2.findChessboardCorners(gray, (nx, ny), None)
 
 
-class Calibrator:
+class CameraCalibrator:
 
     mtx = None
     dist = None
@@ -63,7 +63,6 @@ class Calibrator:
     def undistort(self, img):
         return cv2.undistort(img, self.mtx, self.dist, None, self.mtx)
 
-
     def get_perspective_transform(self, is_inverse=False):
 
         src_pts = np.float32([[262, 684], [586, 457], [695, 457], [1019, 684]])
@@ -73,11 +72,9 @@ class Calibrator:
         else:
             return  cv2.getPerspectiveTransform(dst_pts, src_pts)
 
-
     def warp(self, image):
         img_size = (image.shape[1], image.shape[0])
         return cv2.warpPerspective(image, self.perspective_mtx, img_size)
-
 
     def unwarp(self, image):
         img_size = (image.shape[1], image.shape[0])
